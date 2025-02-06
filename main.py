@@ -3,40 +3,41 @@ import random
 import os
 import ffmpeg
 from faster_whisper import WhisperModel
+import argparse
 
-# Constantes
+# Constants in camelCase
 TEMP_AUDIO_FILE = "audio.mp3"
 VIDEO_DATABASE = "./bases"
-SRT_FILE = "sub.srt"
+TEMP_SRT_FILE = "sub.srt"
 FINAL_VIDEO_FILE = "final.mp4"
 
-def generateAudio(filename, text, lang='fr', tld='com'):
+def generateAudio(fileName, text, lang="en", tld="com"):
     """
-    Convertir le texte en audio avec gTTS et sauvegarder dans filename.
+    Convert text to audio using gTTS and save it to fileName.
     """
     tts = gTTS(text=text, lang=lang, tld=tld)
-    tts.save(filename)
-    print("[LOG] Audio sauvegardé dans", filename)
+    tts.save(fileName)
+    print("[LOG] Audio saved to", fileName)
 
 def getRandomVideo(folder):
     """
-    Sélectionner une vidéo aléatoire dans le dossier donné.
+    Select a random video file from the given folder.
     """
     videoFiles = [f for f in os.listdir(folder) if f.endswith(('.mp4', '.avi', '.mov'))]
     if not videoFiles:
-        raise FileNotFoundError("Aucun fichier vidéo trouvé dans le dossier VIDEO_DATABASE.")
-    selected_video = os.path.join(folder, random.choice(videoFiles))
-    print("[LOG] Vidéo sélectionnée :", selected_video)
-    return selected_video
+        raise FileNotFoundError("No video files found in the videoDatabase folder.")
+    selectedVideo = os.path.join(folder, random.choice(videoFiles))
+    print(f"[LOG] Video selected: \"{selectedVideo}\"")
+    return selectedVideo
 
 def generateSubtitles(audioPath, maxWordsPerSegment=5):
     """
-    Transcrire l'audio et segmenter le texte en sous-titres.
+    Transcribe the audio and split the text into subtitle segments.
     """
     model = WhisperModel("small", compute_type="float32")
     segments, info = model.transcribe(audioPath)
     language = info.language
-    print("[LOG] Langue de la transcription :", language)
+    print("[LOG] Transcription language:", language)
     
     newSegments = []
     for segment in segments:
@@ -51,7 +52,7 @@ def generateSubtitles(audioPath, maxWordsPerSegment=5):
             subEnd = min(startTime + (i + maxWordsPerSegment) * durationPerWord, endTime)
             newSegments.append((subStart, subEnd, subText))
     
-    print("[LOG] Segments générés :")
+    print("[LOG] Generated subtitle segments:")
     for subStart, subEnd, subText in newSegments:
         print(f"\t[{subStart:.2f}s -> {subEnd:.2f}s] {subText}")
         
@@ -59,7 +60,7 @@ def generateSubtitles(audioPath, maxWordsPerSegment=5):
 
 def formatTime(seconds):
     """
-    Convertir des secondes en format SRT : HH:MM:SS,mmm.
+    Convert seconds into SRT format (HH:MM:SS,mmm).
     """
     millisec = int((seconds % 1) * 1000)
     hours = int(seconds // 3600)
@@ -67,9 +68,9 @@ def formatTime(seconds):
     sec = int(seconds % 60)
     return f"{hours:02}:{minutes:02}:{sec:02},{millisec:03}"
 
-def generateSubtitleFile(file, segments):
+def generateSubtitleFile(fileName, segments):
     """
-    Générer un fichier SRT à partir des segments de sous-titres.
+    Generate an SRT file from subtitle segments.
     """
     text = ""
     for index, segment in enumerate(segments):
@@ -77,81 +78,98 @@ def generateSubtitleFile(file, segments):
         segmentEnd = formatTime(segment[1])
         text += f"{index + 1}\n{segmentStart} --> {segmentEnd}\n{segment[2]}\n\n"
 
-    with open(file, "w", encoding="utf-8") as f:
+    with open(fileName, "w", encoding="utf-8") as f:
         f.write(text)
-    print(f"[LOG] Fichier SRT généré : {file}")
+    print(f"[LOG] SRT file generated: {fileName}")
 
 def createFinalClip(inputFile, audioFile, subtitleFile, outputFile):
     """
-    Créer la vidéo finale en une seule passe FFmpeg :
-      - Extrait un clip aléatoire de la vidéo de la durée de l'audio.
-      - Applique un crop pour obtenir un format portrait (9:16).
-      - Intègre l'audio.
-      - Ajoute les sous-titres via le filtre 'subtitles'.
+    Create the final video in a single ffmpeg pass:
+      - Extract a random clip from the video matching the audio duration.
+      - Apply a portrait crop (9:16).
+      - Overlay subtitles.
+      - Integrate the audio.
     """
-    # Récupérer la durée de la vidéo
+    # Get video duration
     probeVideo = ffmpeg.probe(inputFile)
     videoStream = next((stream for stream in probeVideo["streams"] if stream["codec_type"] == "video"), None)
     videoDuration = float(videoStream["duration"]) if videoStream else 0
 
-    # Récupérer la durée de l'audio
+    # Get audio duration
     probeAudio = ffmpeg.probe(audioFile)
     audioStream = next((stream for stream in probeAudio["streams"] if stream["codec_type"] == "audio"), None)
     audioDuration = float(audioStream["duration"]) if audioStream else 0
 
     if videoDuration < audioDuration:
-        raise ValueError("La vidéo doit être au moins aussi longue que l'audio.")
+        raise ValueError("The video must be at least as long as the audio.")
 
-    # Déterminer un point de départ aléatoire dans la vidéo
+    # Determine a random start time in the video
     startTime = random.uniform(0, videoDuration - audioDuration)
 
-    # Charger la vidéo en extrayant le clip de la durée de l'audio
+    # Load the video and extract a clip with the audio's duration
     video = ffmpeg.input(inputFile, ss=startTime, t=audioDuration)
-    # Appliquer le crop en mode portrait (9:16)
+    # Apply portrait crop (9:16)
     video = video.filter("crop", "in_h*9/16", "in_h", "(in_w-out_w)/2", 0)
-    # Ajouter directement les sous-titres
+    # Add subtitles directly
     video = video.filter("subtitles", subtitleFile)
 
-    # Charger l'audio
+    # Load the audio
     audio = ffmpeg.input(audioFile)
 
-    # Générer la vidéo finale en une seule passe
+    # Generate the final video in a single pass
     (
         ffmpeg
         .output(video, audio, outputFile, vcodec="libx264", acodec="aac", video_bitrate="5000k", preset="slow", crf=18)
         .run(overwrite_output=True, quiet=True, capture_stdout=True, capture_stderr=True)
     )
-    print(f"[LOG] Vidéo finale créée : {outputFile}")
+    print(f"[LOG] Final video created: {outputFile}")
 
-def generate(text):
+def generateVideo(text):
     """
-    Pipeline complet :
-      1. Génération de l'audio.
-      2. Transcription et génération des sous-titres.
-      3. Création de la vidéo finale (clip aléatoire, audio, sous-titres) en une seule passe FFmpeg.
-      4. Nettoyage des fichiers temporaires.
+    Complete pipeline:
+      1. Generate audio.
+      2. Transcribe and generate subtitles.
+      3. Create the final video (random clip, audio, subtitles) in a single ffmpeg pass.
+      4. Clean up temporary files.
     """
-    # 1. Générer l'audio
+    # 1. Generate audio
     generateAudio(TEMP_AUDIO_FILE, text)
     
-    # 2. Transcrire l'audio et générer le fichier SRT
+    # 2. Transcribe audio and generate SRT file
     language, segments = generateSubtitles(TEMP_AUDIO_FILE)
-    generateSubtitleFile(SRT_FILE, segments)
+    generateSubtitleFile(TEMP_SRT_FILE, segments)
     
-    # 3. Sélectionner une vidéo aléatoire et créer la vidéo finale en une seule passe
+    # 3. Select a random video and create the final video
     videoFile = getRandomVideo(VIDEO_DATABASE)
-    createFinalClip(videoFile, TEMP_AUDIO_FILE, SRT_FILE, FINAL_VIDEO_FILE)
+    createFinalClip(videoFile, TEMP_AUDIO_FILE, TEMP_SRT_FILE, FINAL_VIDEO_FILE)
     
-    # 4. Supprimer les fichiers temporaires
+    # 4. Delete temporary files
     os.remove(TEMP_AUDIO_FILE)
-    os.remove(SRT_FILE)
-    print("[LOG] Fichiers temporaires supprimés.")
+    os.remove(TEMP_SRT_FILE)
+    print("[LOG] Temporary files deleted.")
 
 if __name__ == "__main__":
-    text = (
-        "On sait depuis longtemps que travailler avec du texte lisible et contenant du sens est source de distractions, "
-        "et empêche de se concentrer sur la mise en page elle-même. L'avantage du Lorem Ipsum sur un texte générique "
-        "comme 'Du texte. Du texte. Du texte.' est qu'il possède une distribution de lettres plus ou moins normale, "
-        "et en tout cas comparable avec celle du français standard. "
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="Brainrot video generator"
     )
-    generate(text)
+    parser.add_argument("-o", "--output", type=str, help="Output video file name", default=FINAL_VIDEO_FILE)
+    parser.add_argument("-s", "--script", type=str, help="Path to the script text file", default=None)
+    parser.add_argument("-v", "--videos", type=str, help="Path to the folder containing video files", default=VIDEO_DATABASE)
+    args = parser.parse_args()
+    
+    # Override the default values if provided via command-line.
+    FINAL_VIDEO_FILE = args.output
+    VIDEO_DATABASE = args.videos
+    
+    # Check if the script file is provided.
+    if args.script is None:
+        print("Please provide a script text file.")
+        exit()
+    
+    # Read the script text from the file.
+    with open(args.script, "r", encoding="utf-8") as f:
+        scriptText = f.read()
+
+    # Generate the video.
+    generateVideo(scriptText)

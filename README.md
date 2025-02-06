@@ -11,3 +11,5 @@ Installer les dépendances python via `pip` :
 ```sh
 pip install gtts moviepy faster-whisper ffmpeg-python
 ```
+
+Installer `ffmpeg` sur leur [site web](https://www.ffmpeg.org/download.html)
