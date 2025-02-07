@@ -13,13 +13,13 @@ TEMP_SRT_FILE = "sub.srt"
 TEMP_VIDEO_FILE = "temp.mp4"
 FINAL_VIDEO_FILE = "final.mp4"
 
-def generateAudio(fileName, text, language="en", tld="com"):
+def generateAudio(fileName, text, language="fr", tld="com"):
     """
     Convert text to audio using gTTS and save it to fileName.
     """
+    print("[LOG] Génération de la piste son")
     tts = gTTS(text=text, lang=language, tld=tld)
     tts.save(fileName)
-    print("[LOG] Audio saved to", fileName)
 
 def getRandomVideo(folder):
     """
@@ -29,17 +29,16 @@ def getRandomVideo(folder):
     if not videoFiles:
         raise FileNotFoundError("No video files found in the videoDatabase folder.")
     selectedVideo = os.path.join(folder, random.choice(videoFiles))
-    print(f"[LOG] Video selected: \"{selectedVideo}\"")
     return selectedVideo
 
 def generateSubtitles(audioPath, maxWordsPerSegment=5, language="fr"):
     """
     Transcribe the audio and split the text into subtitle segments.
     """
+    print("[LOG] Separation des sous-titres")
     model = WhisperModel("small", compute_type="float32")
     segments, info = model.transcribe(audioPath, language=language)
     language = info.language
-    print("[LOG] Transcription language:", language)
     
     newSegments = []
     for segment in segments:
@@ -54,9 +53,9 @@ def generateSubtitles(audioPath, maxWordsPerSegment=5, language="fr"):
             subEnd = min(startTime + (i + maxWordsPerSegment) * durationPerWord, endTime)
             newSegments.append((subStart, subEnd, subText))
     
-    print("[LOG] Generated subtitle segments:")
-    for subStart, subEnd, subText in newSegments:
-        print(f"\t[{subStart:.2f}s -> {subEnd:.2f}s] {subText}")
+    #print("[LOG] Generated subtitle segments:")
+    #for subStart, subEnd, subText in newSegments:
+    #    print(f"\t[{subStart:.2f}s -> {subEnd:.2f}s] {subText}")
         
     return language, newSegments
 
@@ -74,6 +73,7 @@ def generateSubtitleFile(fileName, segments):
     """
     Generate an SRT file from subtitle segments.
     """
+    print("[LOG] Enregistrement du fichier SRT")
     text = ""
     for index, segment in enumerate(segments):
         segmentStart = formatTime(segment[0])
@@ -82,14 +82,14 @@ def generateSubtitleFile(fileName, segments):
 
     with open(fileName, "w", encoding="utf-8") as f:
         f.write(text)
-    print(f"[LOG] SRT file generated: {fileName}")
 
 def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
     """
     Génère un clip vidéo à partir de baseVideo dont la durée correspond à celle de audioFile.
     Le clip est rogné en format portrait (9:16) et les sous-titres sont ajoutés.
-    Le fichier de sortie ne contient pas d'audio.
+    Le fichier de sortie ne contient pas d'audio et ne comporte aucune métadonnée.
     """
+    print("[LOG] Génération du clip vidéo")
     # Obtenir la durée du fichier audio
     probeAudio = ffmpeg.probe(audioFile)
     audioStream = next((stream for stream in probeAudio["streams"] if stream["codec_type"] == "audio"), None)
@@ -119,7 +119,7 @@ def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
     # Ajouter les sous-titres à partir du fichier de sous-titres
     video_clip = video_clip.filter("subtitles", subtitleFile)
     
-    # Exporter la vidéo (sans audio)
+    # Exporter la vidéo (sans audio) et supprimer toutes les métadonnées avec -map_metadata -1
     ffmpeg.output(
         video_clip, 
         outputFile, 
@@ -127,23 +127,21 @@ def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
         video_bitrate="5000k", 
         preset="slow", 
         crf=18, 
-        an=None  # Indique de ne pas inclure d'audio
+        an=None,  # Indique de ne pas inclure d'audio
+        map_metadata="-1"
     ).run(overwrite_output=True, quiet=True, capture_stderr=True, capture_stdout=True)  
-    
-    print(f"[LOG] Clip vidéo généré : {outputFile}")
 
 def addAudio(baseVideo, audioFile, outputFile):
     """
     Ajoute la piste audio du fichier audioFile à la vidéo baseVideo.
     Le résultat final est enregistré dans outputFile.
     """
+    print("[LOG] Ajout de l'audio au clip")
     my_clip = mpe.VideoFileClip(baseVideo, audio=False)
     audio_background = mpe.AudioFileClip(audioFile)
     final_clip = my_clip.set_audio(audio_background)
     final_clip.write_videofile(outputFile, verbose=False, logger=None)
     
-    print(f"[LOG] Audio ajouté à la vidéo finale : {outputFile}")
-
 
 def generateVideo(text, language):
     """
@@ -170,10 +168,30 @@ def generateVideo(text, language):
     addAudio(TEMP_VIDEO_FILE, TEMP_AUDIO_FILE, FINAL_VIDEO_FILE)
 
     # 6. Delete temporary files
+    print("[LOG] Nettoyage des fichiers temporaires")
     os.remove(TEMP_AUDIO_FILE)
     os.remove(TEMP_SRT_FILE)
     os.remove(TEMP_VIDEO_FILE)
-    print("[LOG] Temporary files deleted.")
+
+def generateVideoFromScriptFile(scriptFile, language):
+    """
+    Read script file and generate video.
+    """
+    # Read script file
+    with open(scriptFile, "r", encoding="utf-8") as f:
+        scriptText = f.read()
+
+    # Generate the video
+    generateVideo(scriptText, language)
+
+def generateVideoFromPrompt(prompt, language):
+    """
+    Generate video from a prompt.
+    """
+    print("[LOG] Génération du script")
+    from prompt import generateScriptFromPrompt
+    scriptText = generateScriptFromPrompt(prompt)
+    generateVideo(scriptText, language)
 
 if __name__ == "__main__":
     # Parse command-line arguments
@@ -182,6 +200,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("-o", "--output", type=str, help="Output video file name", default=FINAL_VIDEO_FILE)
     parser.add_argument("-s", "--script", type=str, help="Path to the script text file", default=None)
+    parser.add_argument("-p", "--prompt", type=str, help="Prompt that generate the script file", default=None)
     parser.add_argument("-v", "--videos", type=str, help="Path to the folder containing video files", default=VIDEO_DATABASE)
     parser.add_argument("-l", "--language", type=str, help="Language used by the script (fr, en)", default="fr")
     args = parser.parse_args()
@@ -189,16 +208,17 @@ if __name__ == "__main__":
     # Override the default values if provided via command-line.
     FINAL_VIDEO_FILE = args.output
     VIDEO_DATABASE = args.videos
-    
-    # Check if the script file is provided.
-    if args.script is None:
-        print("Please provide a script text file.")
-        exit()
-    
-    # Read the script text from the file.
-    with open(args.script, "r", encoding="utf-8") as f:
-        scriptText = f.read()
-    print("[LOG] Script text loaded.")
 
-    # Generate the video.
-    generateVideo(scriptText, args.language)
+    # Check if there is a prompt or a text, but not both
+    if args.script is None and args.prompt is None:
+        print("Please provide a script text file or a prompt.")
+        exit()
+    if args.script is not None and args.prompt is not None:
+        print("Please provide either a script text file or a prompt, not both.")
+        exit()
+
+    # Type
+    if args.prompt is not None:
+        generateVideoFromPrompt(args.prompt, args.language)
+    elif args.script is not None:
+        generateVideoFromScriptFile(args.script, args.language)

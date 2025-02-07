@@ -10,6 +10,7 @@ git clone https://github.com/ruffaultravenelg/brainrotter.git
 Installer les dépendances python via `pip` :
 ```sh
 pip install gtts moviepy faster-whisper ffmpeg-python
+pip install -q -U google-generativeai
 ```
 
 Installer `ffmpeg` sur leur [site web](https://www.ffmpeg.org/download.html)

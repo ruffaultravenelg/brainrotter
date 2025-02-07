@@ -3,3 +3,5 @@ bases/
 *.mp3
 *.srt
 *.txt
+.env
+__pycache__
