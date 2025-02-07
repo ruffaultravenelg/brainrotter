@@ -83,6 +83,16 @@ def generateSubtitleFile(fileName, segments):
     with open(fileName, "w", encoding="utf-8") as f:
         f.write(text)
 
+def getAudioDuration(audioFile):
+    """
+    Get the duration of the audio file.
+    """
+    probeAudio = ffmpeg.probe(audioFile)
+    audioStream = next((stream for stream in probeAudio["streams"] if stream["codec_type"] == "audio"), None)
+    if not audioStream:
+        raise ValueError("Aucun flux audio trouvé dans le fichier audio.")
+    return float(audioStream["duration"])
+
 def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
     """
     Génère un clip vidéo à partir de baseVideo dont la durée correspond à celle de audioFile.
@@ -91,11 +101,7 @@ def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
     """
     print("[LOG] Génération du clip vidéo")
     # Obtenir la durée du fichier audio
-    probeAudio = ffmpeg.probe(audioFile)
-    audioStream = next((stream for stream in probeAudio["streams"] if stream["codec_type"] == "audio"), None)
-    if not audioStream:
-        raise ValueError("Aucun flux audio trouvé dans le fichier audio.")
-    audioDuration = float(audioStream["duration"])
+    audioDuration = getAudioDuration(audioFile)
     
     # Obtenir la durée de la vidéo de base
     probeVideo = ffmpeg.probe(baseVideo)
@@ -129,7 +135,7 @@ def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
         crf=18, 
         an=None,  # Indique de ne pas inclure d'audio
         map_metadata="-1"
-    ).run(overwrite_output=True, quiet=True, capture_stderr=True, capture_stdout=True)  
+    ).run(overwrite_output=True, quiet=True, capture_stderr=True, capture_stdout=True)
 
 def addAudio(baseVideo, audioFile, outputFile):
     """
