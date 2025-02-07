@@ -3,19 +3,21 @@ import random
 import os
 import ffmpeg
 from faster_whisper import WhisperModel
+import moviepy.editor as mpe
 import argparse
 
 # Constants in camelCase
 TEMP_AUDIO_FILE = "audio.mp3"
 VIDEO_DATABASE = "./bases"
 TEMP_SRT_FILE = "sub.srt"
+TEMP_VIDEO_FILE = "temp.mp4"
 FINAL_VIDEO_FILE = "final.mp4"
 
-def generateAudio(fileName, text, lang="en", tld="com"):
+def generateAudio(fileName, text, language="en", tld="com"):
     """
     Convert text to audio using gTTS and save it to fileName.
     """
-    tts = gTTS(text=text, lang=lang, tld=tld)
+    tts = gTTS(text=text, lang=language, tld=tld)
     tts.save(fileName)
     print("[LOG] Audio saved to", fileName)
 
@@ -30,12 +32,12 @@ def getRandomVideo(folder):
     print(f"[LOG] Video selected: \"{selectedVideo}\"")
     return selectedVideo
 
-def generateSubtitles(audioPath, maxWordsPerSegment=5):
+def generateSubtitles(audioPath, maxWordsPerSegment=5, language="fr"):
     """
     Transcribe the audio and split the text into subtitle segments.
     """
     model = WhisperModel("small", compute_type="float32")
-    segments, info = model.transcribe(audioPath)
+    segments, info = model.transcribe(audioPath, language=language)
     language = info.language
     print("[LOG] Transcription language:", language)
     
@@ -82,49 +84,68 @@ def generateSubtitleFile(fileName, segments):
         f.write(text)
     print(f"[LOG] SRT file generated: {fileName}")
 
-def createFinalClip(inputFile, audioFile, subtitleFile, outputFile):
+def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
     """
-    Create the final video in a single ffmpeg pass:
-      - Extract a random clip from the video matching the audio duration.
-      - Apply a portrait crop (9:16).
-      - Overlay subtitles.
-      - Integrate the audio.
+    Génère un clip vidéo à partir de baseVideo dont la durée correspond à celle de audioFile.
+    Le clip est rogné en format portrait (9:16) et les sous-titres sont ajoutés.
+    Le fichier de sortie ne contient pas d'audio.
     """
-    # Get video duration
-    probeVideo = ffmpeg.probe(inputFile)
-    videoStream = next((stream for stream in probeVideo["streams"] if stream["codec_type"] == "video"), None)
-    videoDuration = float(videoStream["duration"]) if videoStream else 0
-
-    # Get audio duration
+    # Obtenir la durée du fichier audio
     probeAudio = ffmpeg.probe(audioFile)
     audioStream = next((stream for stream in probeAudio["streams"] if stream["codec_type"] == "audio"), None)
-    audioDuration = float(audioStream["duration"]) if audioStream else 0
-
+    if not audioStream:
+        raise ValueError("Aucun flux audio trouvé dans le fichier audio.")
+    audioDuration = float(audioStream["duration"])
+    
+    # Obtenir la durée de la vidéo de base
+    probeVideo = ffmpeg.probe(baseVideo)
+    videoStream = next((stream for stream in probeVideo["streams"] if stream["codec_type"] == "video"), None)
+    if not videoStream:
+        raise ValueError("Aucun flux vidéo trouvé dans la vidéo de base.")
+    videoDuration = float(videoStream["duration"])
+    
     if videoDuration < audioDuration:
-        raise ValueError("The video must be at least as long as the audio.")
-
-    # Determine a random start time in the video
+        raise ValueError("La vidéo de base doit être au moins aussi longue que l'audio.")
+    
+    # Déterminer un point de départ aléatoire pour le clip
     startTime = random.uniform(0, videoDuration - audioDuration)
+    
+    # Extraire le clip de la vidéo de base avec la durée de l'audio
+    video_clip = ffmpeg.input(baseVideo, ss=startTime, t=audioDuration)
+    
+    # Appliquer le rognage pour obtenir le format portrait (9:16)
+    video_clip = video_clip.filter("crop", "in_h*9/16", "in_h", "(in_w-out_w)/2", 0)
+    
+    # Ajouter les sous-titres à partir du fichier de sous-titres
+    video_clip = video_clip.filter("subtitles", subtitleFile)
+    
+    # Exporter la vidéo (sans audio)
+    ffmpeg.output(
+        video_clip, 
+        outputFile, 
+        vcodec="libx264", 
+        video_bitrate="5000k", 
+        preset="slow", 
+        crf=18, 
+        an=None  # Indique de ne pas inclure d'audio
+    ).run(overwrite_output=True, quiet=True, capture_stderr=True, capture_stdout=True)  
+    
+    print(f"[LOG] Clip vidéo généré : {outputFile}")
 
-    # Load the video and extract a clip with the audio's duration
-    video = ffmpeg.input(inputFile, ss=startTime, t=audioDuration)
-    # Apply portrait crop (9:16)
-    video = video.filter("crop", "in_h*9/16", "in_h", "(in_w-out_w)/2", 0)
-    # Add subtitles directly
-    video = video.filter("subtitles", subtitleFile)
+def addAudio(baseVideo, audioFile, outputFile):
+    """
+    Ajoute la piste audio du fichier audioFile à la vidéo baseVideo.
+    Le résultat final est enregistré dans outputFile.
+    """
+    my_clip = mpe.VideoFileClip(baseVideo, audio=False)
+    audio_background = mpe.AudioFileClip(audioFile)
+    final_clip = my_clip.set_audio(audio_background)
+    final_clip.write_videofile(outputFile, verbose=False, logger=None)
+    
+    print(f"[LOG] Audio ajouté à la vidéo finale : {outputFile}")
 
-    # Load the audio
-    audio = ffmpeg.input(audioFile)
 
-    # Generate the final video in a single pass
-    (
-        ffmpeg
-        .output(video, audio, outputFile, vcodec="libx264", acodec="aac", video_bitrate="5000k", preset="slow", crf=18)
-        .run(overwrite_output=True, quiet=True, capture_stdout=True, capture_stderr=True)
-    )
-    print(f"[LOG] Final video created: {outputFile}")
-
-def generateVideo(text):
+def generateVideo(text, language):
     """
     Complete pipeline:
       1. Generate audio.
@@ -133,19 +154,25 @@ def generateVideo(text):
       4. Clean up temporary files.
     """
     # 1. Generate audio
-    generateAudio(TEMP_AUDIO_FILE, text)
+    generateAudio(TEMP_AUDIO_FILE, text, language=language)
     
     # 2. Transcribe audio and generate SRT file
-    language, segments = generateSubtitles(TEMP_AUDIO_FILE)
+    language, segments = generateSubtitles(TEMP_AUDIO_FILE, language=language)
     generateSubtitleFile(TEMP_SRT_FILE, segments)
     
     # 3. Select a random video and create the final video
     videoFile = getRandomVideo(VIDEO_DATABASE)
-    createFinalClip(videoFile, TEMP_AUDIO_FILE, TEMP_SRT_FILE, FINAL_VIDEO_FILE)
+
+    # 4. Generate the clip with subtitles
+    generateClip(videoFile, TEMP_AUDIO_FILE, TEMP_SRT_FILE, TEMP_VIDEO_FILE)
     
-    # 4. Delete temporary files
+    # 5. Add audio to the clip
+    addAudio(TEMP_VIDEO_FILE, TEMP_AUDIO_FILE, FINAL_VIDEO_FILE)
+
+    # 6. Delete temporary files
     os.remove(TEMP_AUDIO_FILE)
     os.remove(TEMP_SRT_FILE)
+    os.remove(TEMP_VIDEO_FILE)
     print("[LOG] Temporary files deleted.")
 
 if __name__ == "__main__":
@@ -156,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output", type=str, help="Output video file name", default=FINAL_VIDEO_FILE)
     parser.add_argument("-s", "--script", type=str, help="Path to the script text file", default=None)
     parser.add_argument("-v", "--videos", type=str, help="Path to the folder containing video files", default=VIDEO_DATABASE)
+    parser.add_argument("-l", "--language", type=str, help="Language used by the script (fr, en)", default="fr")
     args = parser.parse_args()
     
     # Override the default values if provided via command-line.
@@ -170,6 +198,7 @@ if __name__ == "__main__":
     # Read the script text from the file.
     with open(args.script, "r", encoding="utf-8") as f:
         scriptText = f.read()
+    print("[LOG] Script text loaded.")
 
     # Generate the video.
-    generateVideo(scriptText)
+    generateVideo(scriptText, args.language)
