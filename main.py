@@ -7,11 +7,14 @@ import moviepy.editor as mpe
 import argparse
 
 # Constants in camelCase
-TEMP_AUDIO_FILE = "audio.mp3"
-VIDEO_DATABASE = "./bases"
-TEMP_SRT_FILE = "sub.srt"
-TEMP_VIDEO_FILE = "temp.mp4"
+CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+TEMP_AUDIO_FILE = os.path.join(CURRENT_DIR, "audio.mp3")
+VIDEO_DATABASE =  os.path.join(CURRENT_DIR, "bases")
+TEMP_SRT_FILE = os.path.join(CURRENT_DIR, "sub.srt")
+TEMP_VIDEO_FILE = os.path.join(CURRENT_DIR, "temp.mp4")
+
 FINAL_VIDEO_FILE = "final.mp4"
+SUBTITLES_STYLE = "FontName=Montserrat,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=0,Outline=0,Shadow=1,Bold=1,Alignment=10"
 
 def generateAudio(fileName, text, language="fr", tld="com"):
     """
@@ -122,8 +125,11 @@ def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
     # Appliquer le rognage pour obtenir le format portrait (9:16)
     video_clip = video_clip.filter("crop", "in_h*9/16", "in_h", "(in_w-out_w)/2", 0)
     
+    # Les sous titre doivent être dans un chemin relatif parce que ffmpeg n'aime pas les chemins absolus sous windows je suppose
+    subtitleFile = os.path.relpath(subtitleFile, ".")
+
     # Ajouter les sous-titres à partir du fichier de sous-titres
-    video_clip = video_clip.filter("subtitles", subtitleFile)
+    video_clip = video_clip.filter("subtitles", subtitleFile, force_style=SUBTITLES_STYLE)
     
     # Exporter la vidéo (sans audio) et supprimer toutes les métadonnées avec -map_metadata -1
     ffmpeg.output(
@@ -137,6 +143,7 @@ def generateClip(baseVideo, audioFile, subtitleFile, outputFile):
         map_metadata="-1"
     ).run(overwrite_output=True, quiet=True, capture_stderr=True, capture_stdout=True)
 
+
 def addAudio(baseVideo, audioFile, outputFile):
     """
     Ajoute la piste audio du fichier audioFile à la vidéo baseVideo.
@@ -148,7 +155,6 @@ def addAudio(baseVideo, audioFile, outputFile):
     final_clip = my_clip.set_audio(audio_background)
     final_clip.write_videofile(outputFile, verbose=False, logger=None)
     
-
 def generateVideo(text, language):
     """
     Complete pipeline:
@@ -224,6 +230,7 @@ if __name__ == "__main__":
         exit()
 
     # Type
+    print("[LOG] Le processus a démarré")
     if args.prompt is not None:
         generateVideoFromPrompt(args.prompt, args.language)
     elif args.script is not None:
