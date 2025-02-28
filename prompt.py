@@ -10,8 +10,12 @@ load_dotenv()
 
 # Load google api
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-PROMPT = os.getenv("MODEL_PROMPT")
+PROMPT_FILE = os.path.join(os.path.dirname(__file__), os.getenv("PROMPT_FILE"))
 MODEL = os.getenv("MODEL")
+
+# Read prompt from file
+with open(PROMPT_FILE, 'r', encoding='utf-8') as file:
+    PROMPT = file.read().strip()
 
 # Configure API
 genai.configure(api_key=GOOGLE_API_KEY)
@@ -21,7 +25,7 @@ model = genai.GenerativeModel(MODEL)
 
 # Create the prompt for gemini
 def generateGeminiPrompt(userPrompt):
-    return PROMPT.replace(r"{{prompt}}", '"' + userPrompt.strip() + '"')
+    return PROMPT.replace(r"{{prompt}}", userPrompt.strip())
 
 # Generate script
 def generateScriptFromPrompt(userPrompt):

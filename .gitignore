@@ -4,4 +4,5 @@ bases/
 *.srt
 *.txt
 .env
+prompt.txt
 __pycache__
