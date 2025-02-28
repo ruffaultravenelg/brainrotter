@@ -294,5 +294,6 @@ if __name__ == "__main__":
             generateVideoFromScriptFile(args.script, args.language)
 
     except Exception as e:
+        raise e
         print("[ERROR] " + str(e))
         exit()

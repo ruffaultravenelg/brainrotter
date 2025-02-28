@@ -1,0 +1,8 @@
+gTTS==2.3.2
+ffmpeg-python==0.2.0
+faster-whisper==0.10.0
+moviepy==1.0.3
+argparse==1.4.0
+python-dotenv==1.0.0
+google-generativeai==0.3.2
+
